@@ -2,12 +2,13 @@
   "manifest_version": 3,
   "name": "Netflix Dual Subtitles",
   "version": "1.0.0",
-  "description": "Overlay a second subtitle language below Netflix's native subtitles.",
-  "permissions": ["storage", "activeTab"],
+  "description": "Netflix dual subtitles + hover/highlight-to-translate on any website.",
+  "permissions": ["storage", "activeTab", "contextMenus", "scripting"],
   "host_permissions": [
     "https://*.netflix.com/*",
     "https://*.nflxvideo.net/*",
-    "https://*.nflxso.net/*"
+    "https://*.nflxso.net/*",
+    "https://translate.googleapis.com/*"
   ],
   "background": {
     "service_worker": "service-worker.js"

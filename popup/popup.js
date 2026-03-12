@@ -8,19 +8,29 @@
   const statusBar = document.getElementById('status-bar');
   const statusText = document.getElementById('status-text');
 
+  const dualSubsToggle = document.getElementById('dual-subs-toggle');
   const sizeBtns = document.querySelectorAll('.size-btn');
+  const hoverToggle = document.getElementById('hover-translate');
+  const translateTargetEl = document.getElementById('translate-target');
 
   // Load available tracks and saved preferences
   chrome.storage.local.get(
-    ['availableTracks', 'secondaryLang', 'fontSize'],
+    ['availableTracks', 'secondaryLang', 'dualSubsEnabled', 'fontSize', 'hoverTranslate', 'translateTargetLang'],
     (result) => {
       // Set active size button
       const savedSize = result.fontSize || 'small';
       sizeBtns.forEach((btn) => {
         btn.classList.toggle('active', btn.dataset.size === savedSize);
       });
+
+      // Set hover translate toggle
+      hoverToggle.checked = result.hoverTranslate !== false; // default on
+
+      // Set translate target language
+      translateTargetEl.value = result.translateTargetLang || 'en';
       const tracks = result.availableTracks || [];
       const savedLang = result.secondaryLang || '';
+      const enabled = result.dualSubsEnabled === true;
 
       if (tracks.length === 0) {
         noTracksEl.classList.remove('hidden');
@@ -43,33 +53,62 @@
         selectEl.appendChild(opt);
       }
 
-      if (savedLang) {
+      // Set toggle state
+      dualSubsToggle.checked = enabled;
+      updateControlsState(enabled);
+
+      if (enabled && savedLang) {
         showStatus(savedLang);
       }
     }
   );
 
-  // Handle selection change
-  selectEl.addEventListener('change', () => {
-    const lang = selectEl.value;
-
-    // Persist preference
-    chrome.storage.local.set({ secondaryLang: lang || null });
-
-    // Send to content script
+  // Helper: send message to active tab
+  function sendToTab(msg) {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
-        chrome.tabs.sendMessage(tabs[0].id, {
-          type: 'LOAD_SECONDARY',
-          language: lang || null,
-        });
+        chrome.tabs.sendMessage(tabs[0].id, msg);
       }
     });
+  }
 
-    if (lang) {
+  // Helper: enable/disable controls based on toggle state
+  function updateControlsState(enabled) {
+    selectEl.disabled = !enabled;
+    sizeBtns.forEach((btn) => { btn.disabled = !enabled; });
+    if (!enabled) {
+      statusBar.classList.add('hidden');
+    }
+  }
+
+  // Activate or deactivate dual subs
+  function applyDualSubs(enabled) {
+    const lang = enabled ? (selectEl.value || null) : null;
+    sendToTab({ type: 'LOAD_SECONDARY', language: lang });
+
+    if (enabled && lang) {
       showStatus(lang);
     } else {
       statusBar.classList.add('hidden');
+    }
+  }
+
+  // Handle dual subs toggle
+  dualSubsToggle.addEventListener('change', () => {
+    const enabled = dualSubsToggle.checked;
+    chrome.storage.local.set({ dualSubsEnabled: enabled });
+    updateControlsState(enabled);
+    applyDualSubs(enabled);
+  });
+
+  // Handle language selection change
+  selectEl.addEventListener('change', () => {
+    const lang = selectEl.value;
+    chrome.storage.local.set({ secondaryLang: lang || null });
+
+    if (dualSubsToggle.checked && lang) {
+      sendToTab({ type: 'LOAD_SECONDARY', language: lang });
+      showStatus(lang);
     }
   });
 
@@ -79,16 +118,22 @@
       const size = btn.dataset.size;
       sizeBtns.forEach((b) => b.classList.toggle('active', b === btn));
       chrome.storage.local.set({ fontSize: size });
-
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs[0]?.id) {
-          chrome.tabs.sendMessage(tabs[0].id, {
-            type: 'SET_FONT_SIZE',
-            size,
-          });
-        }
-      });
+      sendToTab({ type: 'SET_FONT_SIZE', size });
     });
+  });
+
+  // Handle hover translate toggle
+  hoverToggle.addEventListener('change', () => {
+    const enabled = hoverToggle.checked;
+    chrome.storage.local.set({ hoverTranslate: enabled });
+    sendToTab({ type: 'SET_HOVER_TRANSLATE', enabled });
+  });
+
+  // Handle translate target language change
+  translateTargetEl.addEventListener('change', () => {
+    const targetLang = translateTargetEl.value;
+    chrome.storage.local.set({ translateTargetLang: targetLang });
+    sendToTab({ type: 'SET_TRANSLATE_TARGET', lang: targetLang });
   });
 
   function showStatus(lang) {

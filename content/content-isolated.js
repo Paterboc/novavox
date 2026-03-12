@@ -224,6 +224,23 @@
 
   function injectOverlay() {
     document.body.appendChild(overlayEl);
+    injectSubtitleSelectStyles();
+  }
+
+  // Make native Netflix subtitles selectable for hover-translate
+  let subtitleStylesInjected = false;
+  function injectSubtitleSelectStyles() {
+    if (subtitleStylesInjected) return;
+    subtitleStylesInjected = true;
+    const style = document.createElement('style');
+    style.textContent = `
+      .player-timedtext, .player-timedtext span {
+        user-select: text !important;
+        -webkit-user-select: text !important;
+        pointer-events: auto !important;
+      }
+    `;
+    document.head.appendChild(style);
   }
 
   function clearOverlay() {
@@ -284,7 +301,17 @@
       store._lastTime = 0;
       store._lastIdx = 0;
     }
+
+    // Reset calibration — old samples are from a different position
+    calibrationSamples = [];
+    lastNativeText = '';
+
     renderNow();
+
+    // Proactively recalibrate at new position
+    if (store) {
+      setTimeout(calibratePeriodic, 500);
+    }
   }
 
   function onPlay() {
@@ -314,7 +341,19 @@
 
     if (text !== lastRenderedText) {
       lastRenderedText = text;
-      overlayEl.textContent = text;
+      if (text) {
+        // Wrap in a span with pointer-events so hover-translate can detect words
+        overlayEl.innerHTML = '';
+        const span = document.createElement('span');
+        span.textContent = text;
+        span.style.pointerEvents = 'auto';
+        span.style.cursor = 'text';
+        span.style.userSelect = 'text';
+        span.style.webkitUserSelect = 'text';
+        overlayEl.appendChild(span);
+      } else {
+        overlayEl.textContent = '';
+      }
     }
     adjustPosition();
   }
@@ -343,10 +382,38 @@
   }
 
   // ── Auto-calibration ──
-  // Watch Netflix's native subtitle div. When it changes, compare the video
-  // time to our cue timestamps. If there's a consistent offset, apply it.
+  // Robust sync: watches native subs, finds nearest cue boundary with fine
+  // granularity, periodic re-check, and recalibrates on seek.
   let calibrationSamples = [];
   let lastNativeText = '';
+  let periodicCalibrationTimer = null;
+
+  // Find the nearest cue boundary to a given time and return the precise offset.
+  // Searches the raw cue array directly for accuracy.
+  function findNearestCueOffset(videoTime) {
+    if (!store || !store.cues.length) return null;
+
+    let bestOffset = null;
+    let bestDist = Infinity;
+
+    for (const cue of store.cues) {
+      // Check distance to cue start
+      const distStart = Math.abs(cue.start - videoTime);
+      if (distStart < bestDist && distStart <= 10) {
+        bestDist = distStart;
+        bestOffset = cue.start - videoTime;
+      }
+    }
+
+    return bestOffset;
+  }
+
+  function addCalibrationSample(offset) {
+    calibrationSamples.push(offset);
+    // Keep a rolling window of 20 samples
+    if (calibrationSamples.length > 20) calibrationSamples.shift();
+    applyCalibration();
+  }
 
   const timedTextObserver = new MutationObserver(() => {
     if (overlayEl) adjustPosition();
@@ -359,45 +426,62 @@
     if (!nativeText || nativeText === lastNativeText) return;
     lastNativeText = nativeText;
 
-    // Netflix just showed a new native subtitle at this video time
+    // Netflix just showed a new native subtitle — find the nearest cue
     const videoTime = boundVideo.currentTime;
-
-    // Find which cue in our store is closest to this video time
-    // (without offset, to measure the raw difference)
-    const rawCues = SubtitleStore.getCuesAt(store, videoTime);
-    if (rawCues.length === 0) {
-      // Try searching nearby — our timestamps might be offset
-      for (let delta = -5; delta <= 5; delta += 0.5) {
-        const nearby = SubtitleStore.getCuesAt(store, videoTime + delta);
-        if (nearby.length > 0) {
-          const sample = delta;
-          calibrationSamples.push(sample);
-          if (calibrationSamples.length > 10) calibrationSamples.shift();
-          applyCalibration();
-          break;
-        }
-      }
-    } else {
-      // Cues found at raw videoTime — offset is ~0 (or already calibrated)
-      calibrationSamples.push(0);
-      if (calibrationSamples.length > 10) calibrationSamples.shift();
-      applyCalibration();
+    const offset = findNearestCueOffset(videoTime);
+    if (offset !== null) {
+      addCalibrationSample(offset);
     }
   });
 
   function applyCalibration() {
-    if (calibrationSamples.length < 3) return;
+    if (calibrationSamples.length < 2) return;
 
-    // Use median to avoid outliers
+    // Use median to reject outliers
     const sorted = [...calibrationSamples].sort((a, b) => a - b);
     const median = sorted[Math.floor(sorted.length / 2)];
 
-    if (Math.abs(median - timeOffset) > 0.1) {
+    // Apply if offset changed meaningfully (>50ms)
+    if (Math.abs(median - timeOffset) > 0.05) {
       console.log('[DualSubs] Auto-calibrated offset:',
-        timeOffset.toFixed(2) + 's →', median.toFixed(2) + 's',
+        timeOffset.toFixed(3) + 's →', median.toFixed(3) + 's',
         '(from', calibrationSamples.length, 'samples)');
       timeOffset = median;
       renderNow();
+    }
+  }
+
+  // Periodic re-check — proactively calibrates even if native subs aren't
+  // triggering MutationObserver (e.g., native subs off, or sparse dialogue).
+  // Runs every 10 seconds when a track is loaded.
+  function calibratePeriodic() {
+    if (!store || !boundVideo) return;
+    if (boundVideo.paused) return;
+
+    const videoTime = boundVideo.currentTime;
+
+    // Check if there's a cue near the current time (with current offset applied)
+    const withOffset = SubtitleStore.getCuesAt(store, videoTime + timeOffset);
+
+    // If we have a cue showing, verify alignment by checking raw position
+    const offset = findNearestCueOffset(videoTime);
+    if (offset !== null) {
+      addCalibrationSample(offset);
+    } else if (withOffset.length === 0) {
+      // No cue at current time — could be a gap, or severe desync.
+      // Don't add a sample (we can't tell which case it is).
+    }
+  }
+
+  function startPeriodicCalibration() {
+    if (periodicCalibrationTimer) return;
+    periodicCalibrationTimer = setInterval(calibratePeriodic, 10000);
+  }
+
+  function stopPeriodicCalibration() {
+    if (periodicCalibrationTimer) {
+      clearInterval(periodicCalibrationTimer);
+      periodicCalibrationTimer = null;
     }
   }
 
@@ -410,6 +494,7 @@
         characterData: true,
       });
     }
+    startPeriodicCalibration();
   }
 
   // Retry observation until Netflix player is ready
