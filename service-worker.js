@@ -12,9 +12,14 @@ chrome.runtime.onInstalled.addListener(() => {
 // Track which tabs already have the script injected
 const injectedTabs = new Set();
 
-// Clean up when tabs close
+// Clean up when tabs close or navigate
 chrome.tabs.onRemoved.addListener((tabId) => {
   injectedTabs.delete(tabId);
+});
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === 'loading') {
+    injectedTabs.delete(tabId);
+  }
 });
 
 // Handle context menu click — inject JS+CSS on demand, then send selection

@@ -55,7 +55,7 @@ select {
 
 select:focus {
   outline: none;
-  border-color: #e50914;
+  border-color: #7c5cbf;
 }
 
 select:hover {
@@ -89,8 +89,8 @@ select:hover {
 
 .size-btn.active {
   color: #fff;
-  background: #e50914;
-  border-color: #e50914;
+  background: #7c5cbf;
+  border-color: #7c5cbf;
 }
 
 .toggle-row {
@@ -135,7 +135,7 @@ select:hover {
 }
 
 .toggle-check:checked {
-  background: #e50914;
+  background: #7c5cbf;
 }
 
 .toggle-check:checked::after {

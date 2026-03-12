@@ -252,6 +252,7 @@
 
   function disableOverlay() {
     stopSync();
+    stopPeriodicCalibration();
     clearOverlay();
     store = null;
     secondaryLang = null;
@@ -355,7 +356,6 @@
         overlayEl.textContent = '';
       }
     }
-    adjustPosition();
   }
 
   function syncTick() {
@@ -377,10 +377,6 @@
     renderNow();
   }
 
-  function adjustPosition() {
-    // Fixed position — no dynamic repositioning
-  }
-
   // ── Auto-calibration ──
   // Robust sync: watches native subs, finds nearest cue boundary with fine
   // granularity, periodic re-check, and recalibrates on seek.
@@ -388,20 +384,29 @@
   let lastNativeText = '';
   let periodicCalibrationTimer = null;
 
-  // Find the nearest cue boundary to a given time and return the precise offset.
-  // Searches the raw cue array directly for accuracy.
+  // Find the nearest cue start to a given time and return the precise offset.
+  // Uses binary search since cues are sorted by start time.
   function findNearestCueOffset(videoTime) {
     if (!store || !store.cues.length) return null;
+    const cues = store.cues;
 
+    // Binary search for rightmost cue with start <= videoTime
+    let lo = 0, hi = cues.length - 1, mid = 0;
+    while (lo <= hi) {
+      mid = (lo + hi) >>> 1;
+      if (cues[mid].start <= videoTime) lo = mid + 1;
+      else hi = mid - 1;
+    }
+    // hi = rightmost cue with start <= videoTime (or -1)
+
+    // Check neighbors around the insertion point
     let bestOffset = null;
     let bestDist = Infinity;
-
-    for (const cue of store.cues) {
-      // Check distance to cue start
-      const distStart = Math.abs(cue.start - videoTime);
-      if (distStart < bestDist && distStart <= 10) {
-        bestDist = distStart;
-        bestOffset = cue.start - videoTime;
+    for (let i = Math.max(0, hi - 1); i <= Math.min(cues.length - 1, hi + 2); i++) {
+      const dist = Math.abs(cues[i].start - videoTime);
+      if (dist < bestDist && dist <= 10) {
+        bestDist = dist;
+        bestOffset = cues[i].start - videoTime;
       }
     }
 
@@ -416,7 +421,6 @@
   }
 
   const timedTextObserver = new MutationObserver(() => {
-    if (overlayEl) adjustPosition();
     if (!store || !boundVideo) return;
 
     const el = document.querySelector('.player-timedtext');
@@ -458,18 +462,9 @@
     if (!store || !boundVideo) return;
     if (boundVideo.paused) return;
 
-    const videoTime = boundVideo.currentTime;
-
-    // Check if there's a cue near the current time (with current offset applied)
-    const withOffset = SubtitleStore.getCuesAt(store, videoTime + timeOffset);
-
-    // If we have a cue showing, verify alignment by checking raw position
-    const offset = findNearestCueOffset(videoTime);
+    const offset = findNearestCueOffset(boundVideo.currentTime);
     if (offset !== null) {
       addCalibrationSample(offset);
-    } else if (withOffset.length === 0) {
-      // No cue at current time — could be a gap, or severe desync.
-      // Don't add a sample (we can't tell which case it is).
     }
   }
 
