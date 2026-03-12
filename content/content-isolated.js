@@ -57,9 +57,9 @@
       store = null;
       availableTracks = [];
       timeOffset = 0;
-      calibrationSamples = [];
       lastNativeText = '';
       consecutiveMisses = 0;
+      calibrationLocked = false;
     }
 
     // Merge with existing tracks instead of replacing
@@ -305,16 +305,11 @@
     }
 
     // Reset calibration — old samples are from a different position
-    calibrationSamples = [];
     lastNativeText = '';
     consecutiveMisses = 0;
+    calibrationLocked = false;
 
     renderNow();
-
-    // Proactively recalibrate at new position
-    if (store) {
-      setTimeout(calibratePeriodic, 500);
-    }
   }
 
   function onPlay() {
@@ -380,42 +375,14 @@
   }
 
   // ── Auto-calibration ──
-  // Watches Netflix's native subtitle div. When native subs appear but our
-  // secondary cues are missing at the current adjusted time, search for the
-  // nearest cue and compute the offset. Once calibrated, don't touch it
-  // unless cues stop appearing (drift detection).
-  let calibrationSamples = [];
+  // Netflix serves both tracks on the same timeline, so offset defaults to 0.
+  // Only recalibrate for large, consistent desyncs (e.g., file offset by
+  // several seconds). Small gaps between tracks are normal — different
+  // languages segment dialogue into cues differently.
   let lastNativeText = '';
   let periodicCalibrationTimer = null;
   let consecutiveMisses = 0;
-
-  // Find the nearest cue start to a given time using binary search.
-  // Returns the offset (cue.start - videoTime), or null if nothing within range.
-  function findNearestCueOffset(videoTime) {
-    if (!store || !store.cues.length) return null;
-    const cues = store.cues;
-
-    // Binary search for rightmost cue with start <= videoTime
-    let lo = 0, hi = cues.length - 1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >>> 1;
-      if (cues[mid].start <= videoTime) lo = mid + 1;
-      else hi = mid - 1;
-    }
-
-    // Check neighbors around the insertion point
-    let bestOffset = null;
-    let bestDist = Infinity;
-    for (let i = Math.max(0, hi - 1); i <= Math.min(cues.length - 1, hi + 2); i++) {
-      const dist = Math.abs(cues[i].start - videoTime);
-      if (dist < bestDist && dist <= 5) {
-        bestDist = dist;
-        bestOffset = cues[i].start - videoTime;
-      }
-    }
-
-    return bestOffset;
-  }
+  let calibrationLocked = false;
 
   const timedTextObserver = new MutationObserver(() => {
     if (!store || !boundVideo) return;
@@ -427,49 +394,24 @@
     if (!nativeText || nativeText === lastNativeText) return;
     lastNativeText = nativeText;
 
-    const videoTime = boundVideo.currentTime;
-    const adjustedTime = videoTime + timeOffset;
-
-    // Check if current offset already produces an active cue
+    const adjustedTime = boundVideo.currentTime + timeOffset;
     const activeCues = SubtitleStore.getCuesAt(store, adjustedTime);
+
     if (activeCues.length > 0) {
-      // Current offset is working — cues are showing. Reset miss counter.
+      // Current offset is working fine.
       consecutiveMisses = 0;
       return;
     }
 
-    // Native sub is showing but we have NO secondary cue — we're desynced.
-    // Find the nearest cue to the raw video time and compute offset.
+    // Native sub showing but no secondary cue. Could be a normal
+    // segmentation gap or a real desync. Count it.
     consecutiveMisses++;
-    const offset = findNearestCueOffset(videoTime);
-    if (offset !== null) {
-      calibrationSamples.push(offset);
-      if (calibrationSamples.length > 10) calibrationSamples.shift();
-      applyCalibration();
-    }
   });
 
-  function applyCalibration() {
-    if (calibrationSamples.length < 2) return;
-
-    // Use median to reject outliers
-    const sorted = [...calibrationSamples].sort((a, b) => a - b);
-    const median = sorted[Math.floor(sorted.length / 2)];
-
-    if (Math.abs(median - timeOffset) > 0.05) {
-      console.log('[DualSubs] Auto-calibrated offset:',
-        timeOffset.toFixed(3) + 's →', median.toFixed(3) + 's',
-        '(from', calibrationSamples.length, 'samples)');
-      timeOffset = median;
-      consecutiveMisses = 0;
-      renderNow();
-    }
-  }
-
-  // Periodic drift detection — if we haven't shown a cue in a while during
-  // active playback, force a recalibration attempt.
+  // Periodic check — only applies an offset if there's strong evidence
+  // of a large, consistent desync (many consecutive misses).
   function calibratePeriodic() {
-    if (!store || !boundVideo) return;
+    if (!store || !boundVideo || calibrationLocked) return;
     if (boundVideo.paused) return;
 
     const adjustedTime = boundVideo.currentTime + timeOffset;
@@ -480,15 +422,44 @@
       return;
     }
 
-    // No active cue — could be a natural gap or drift.
-    // Only recalibrate if we've missed multiple checks in a row.
     consecutiveMisses++;
-    if (consecutiveMisses >= 3) {
-      const offset = findNearestCueOffset(boundVideo.currentTime);
-      if (offset !== null && Math.abs(offset - timeOffset) > 0.5) {
-        calibrationSamples = [offset];
-        applyCalibration();
+
+    // Only recalibrate after 6+ consecutive misses (~60s of no matching cues).
+    // This filters out normal cue segmentation gaps.
+    if (consecutiveMisses < 6) return;
+
+    // Search for the nearest cue to the raw video time.
+    const videoTime = boundVideo.currentTime;
+    const cues = store.cues;
+
+    // Binary search for rightmost cue with start <= videoTime
+    let lo = 0, hi = cues.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >>> 1;
+      if (cues[mid].start <= videoTime) lo = mid + 1;
+      else hi = mid - 1;
+    }
+
+    // Find the nearest cue start among neighbors
+    let bestOffset = null;
+    let bestDist = Infinity;
+    for (let i = Math.max(0, hi - 1); i <= Math.min(cues.length - 1, hi + 2); i++) {
+      const dist = Math.abs(cues[i].start - videoTime);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestOffset = cues[i].start - videoTime;
       }
+    }
+
+    // Only apply if the offset is large (>1s) — small differences are
+    // normal segmentation gaps, not real desync.
+    if (bestOffset !== null && Math.abs(bestOffset) > 1) {
+      console.log('[DualSubs] Large desync detected, calibrating offset:',
+        timeOffset.toFixed(3) + 's →', bestOffset.toFixed(3) + 's');
+      timeOffset = bestOffset;
+      consecutiveMisses = 0;
+      calibrationLocked = true; // Don't keep adjusting
+      renderNow();
     }
   }
 
