@@ -64,8 +64,9 @@
       availableTracks = [];
       timeOffset = 0;
       lastNativeText = '';
-      consecutiveMisses = 0;
-      calibrationLocked = false;
+      calibrationSamples = [];
+      lastCalibrationCheck = 0;
+      calibrationCooldown = 0;
     }
 
     // Merge with existing tracks instead of replacing
@@ -317,7 +318,6 @@
 
   function disableOverlay() {
     stopSync();
-    stopPeriodicCalibration();
     clearOverlay();
     store = null;
     secondaryLang = null;
@@ -374,8 +374,9 @@
       store._lastIdx = 0;
     }
     lastNativeText = '';
-    consecutiveMisses = 0;
-    calibrationLocked = false;
+    calibrationSamples = [];
+    lastCalibrationCheck = 0;
+    calibrationCooldown = 0;
     renderNow();
   }
 
@@ -435,18 +436,21 @@
   }
 
   // ── Auto-calibration ──
+  // Only calibrate when native subs are visible (positive evidence of dialogue).
+  // Collect offset samples and apply the median after enough consistent readings.
+  // Never lock — allow continuous recalibration with cooldown.
 
   let lastNativeText = '';
-  let periodicCalibrationTimer = null;
-  let consecutiveMisses = 0;
-  let calibrationLocked = false;
+  let calibrationSamples = [];
+  let lastCalibrationCheck = 0;
+  let calibrationCooldown = 0;
 
   const nativeSubSelector = site === 'youtube'
     ? '.ytp-caption-window-container'
     : '.player-timedtext';
 
   const timedTextObserver = new MutationObserver(() => {
-    if (!store || !boundVideo) return;
+    if (!store || !boundVideo || boundVideo.paused) return;
 
     const el = document.querySelector(nativeSubSelector);
     if (!el) return;
@@ -455,73 +459,86 @@
     if (!nativeText || nativeText === lastNativeText) return;
     lastNativeText = nativeText;
 
-    const adjustedTime = boundVideo.currentTime + timeOffset;
-    const activeCues = SubtitleStore.getCuesAt(store, adjustedTime);
+    // Throttle: check at most every 2s
+    const now = performance.now();
+    if (now - lastCalibrationCheck < 2000) return;
+    lastCalibrationCheck = now;
 
-    if (activeCues.length > 0) {
-      consecutiveMisses = 0;
+    // Cooldown after a calibration was applied
+    if (now < calibrationCooldown) return;
+
+    const adjustedTime = boundVideo.currentTime + timeOffset;
+
+    // Check ±1s window to account for segmentation differences between languages
+    const hasMatch =
+      SubtitleStore.getCuesAt(store, adjustedTime).length > 0 ||
+      SubtitleStore.getCuesAt(store, adjustedTime - 1).length > 0 ||
+      SubtitleStore.getCuesAt(store, adjustedTime + 1).length > 0;
+
+    if (hasMatch) {
+      // In sync — clear any accumulated samples
+      if (calibrationSamples.length > 0) calibrationSamples = [];
       return;
     }
 
-    consecutiveMisses++;
+    // Native subs visible but no secondary match — record potential offset
+    const videoTime = boundVideo.currentTime;
+    const nearest = findNearestCueOffset(store.cues, videoTime);
+    if (!nearest || nearest.dist > 60) return;
+
+    calibrationSamples.push(nearest.offset);
+    if (calibrationSamples.length > 10) calibrationSamples.shift();
+
+    // Need at least 3 consistent samples before applying
+    if (calibrationSamples.length < 3) return;
+
+    // Check consistency: all samples must be within 2s of each other
+    const sorted = calibrationSamples.slice().sort((a, b) => a - b);
+    const range = sorted[sorted.length - 1] - sorted[0];
+    if (range > 2) {
+      // Inconsistent — discard oldest half and wait for more data
+      calibrationSamples = calibrationSamples.slice(-Math.ceil(calibrationSamples.length / 2));
+      return;
+    }
+
+    const medianOffset = sorted[Math.floor(sorted.length / 2)];
+
+    // Only apply if meaningfully different from current offset
+    if (Math.abs(medianOffset - timeOffset) < 0.3) {
+      calibrationSamples = [];
+      return;
+    }
+
+    console.log('[NovaVox] Auto-calibrating: offset',
+      timeOffset.toFixed(2) + 's →', medianOffset.toFixed(2) + 's',
+      '(' + calibrationSamples.length + ' samples, range: ' + range.toFixed(2) + 's)');
+    timeOffset = medianOffset;
+    calibrationSamples = [];
+    calibrationCooldown = performance.now() + 15000;
+    renderNow();
   });
 
-  function calibratePeriodic() {
-    if (!store || !boundVideo || calibrationLocked) return;
-    if (boundVideo.paused) return;
-
-    const adjustedTime = boundVideo.currentTime + timeOffset;
-    const activeCues = SubtitleStore.getCuesAt(store, adjustedTime);
-
-    if (activeCues.length > 0) {
-      consecutiveMisses = 0;
-      return;
-    }
-
-    consecutiveMisses++;
-
-    if (consecutiveMisses < 6) return;
-
-    const videoTime = boundVideo.currentTime;
-    const cues = store.cues;
+  function findNearestCueOffset(cues, time) {
+    if (!cues.length) return null;
 
     let lo = 0, hi = cues.length - 1;
     while (lo <= hi) {
       const mid = (lo + hi) >>> 1;
-      if (cues[mid].start <= videoTime) lo = mid + 1;
+      if (cues[mid].start <= time) lo = mid + 1;
       else hi = mid - 1;
     }
 
-    let bestOffset = null;
+    let best = null;
     let bestDist = Infinity;
-    for (let i = Math.max(0, hi - 1); i <= Math.min(cues.length - 1, hi + 2); i++) {
-      const dist = Math.abs(cues[i].start - videoTime);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestOffset = cues[i].start - videoTime;
+    for (let i = Math.max(0, hi - 3); i <= Math.min(cues.length - 1, lo + 3); i++) {
+      const d = Math.abs(cues[i].start - time);
+      if (d < bestDist) {
+        bestDist = d;
+        best = { offset: cues[i].start - time, dist: d };
       }
     }
 
-    if (bestOffset !== null && Math.abs(bestOffset) > 1) {
-      console.log('[NovaVox] Calibrating offset:',
-        timeOffset.toFixed(3) + 's ->', bestOffset.toFixed(3) + 's');
-      timeOffset = bestOffset;
-      consecutiveMisses = 0;
-      calibrationLocked = true;
-      renderNow();
-    }
-  }
-
-  function startPeriodicCalibration() {
-    if (periodicCalibrationTimer) return;
-    periodicCalibrationTimer = setInterval(calibratePeriodic, 10000);
-  }
-
-  function stopPeriodicCalibration() {
-    if (periodicCalibrationTimer) {
-      clearInterval(periodicCalibrationTimer);
-      periodicCalibrationTimer = null;
-    }
+    return best;
   }
 
   function observeNativeSubs() {
@@ -533,7 +550,6 @@
         characterData: true,
       });
     }
-    startPeriodicCalibration();
   }
 
   const readyObserver = new MutationObserver(() => {
@@ -556,8 +572,9 @@
         availableTracks = [];
         timeOffset = 0;
         lastNativeText = '';
-        consecutiveMisses = 0;
-        calibrationLocked = false;
+        calibrationSamples = [];
+        lastCalibrationCheck = 0;
+        calibrationCooldown = 0;
         chrome.storage.local.set({ availableTracks: [] });
         // Request new tracks after a brief delay for page to load
         setTimeout(() => {
