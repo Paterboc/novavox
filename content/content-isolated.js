@@ -36,8 +36,8 @@
     loadSavedPreference();
 
     // Request buffered data in case MAIN world captured before we loaded
-    window.postMessage({ type: 'netflix_dual_subs_replay' }, '*');
-    window.postMessage({ type: 'dual_subs_media_replay' }, '*');
+    window.postMessage({ type: 'novavox_subs_replay' }, '*');
+    window.postMessage({ type: 'novavox_media_replay' }, '*');
   }
 
   // ── Track Capture (from MAIN world via postMessage) ──
@@ -45,7 +45,7 @@
   function listenForTracks() {
     window.addEventListener('message', (e) => {
       if (e.source !== window) return;
-      if (!e.data || e.data.type !== 'netflix_dual_subs') return;
+      if (!e.data || e.data.type !== 'novavox_subs') return;
 
       const tracks = e.data.tracks;
       if (!Array.isArray(tracks) || tracks.length === 0) return;
@@ -103,7 +103,7 @@
   function listenForMedia() {
     window.addEventListener('message', (e) => {
       if (e.source !== window) return;
-      if (e.data?.type !== 'dual_subs_media') return;
+      if (e.data?.type !== 'novavox_media') return;
 
       chrome.runtime.sendMessage({
         type: 'STORE_MEDIA',
@@ -137,9 +137,6 @@
           language: secondaryLang,
           trackCount: availableTracks.length,
         });
-      } else if (msg.type === 'LOAD_SUBTITLE_FILE') {
-        loadSubtitleFromText(msg.content, msg.filename || '');
-        sendResponse({ ok: true });
       } else if (msg.type === 'DOWNLOAD_TRACK') {
         const track = availableTracks.find(
           (t) => t.language === msg.language && !t.isForced
@@ -177,7 +174,7 @@
       (t) => t.language === lang && !t.isForced
     );
     if (!track || !track.urls.length) {
-      console.warn('[DualSubs] No track found for', lang);
+      console.warn('[NovaVox] No track found for', lang);
       return;
     }
 
@@ -193,27 +190,8 @@
       ensureOverlay();
       startSync();
     } catch (err) {
-      console.error('[DualSubs] Failed to load subtitle:', err);
+      console.error('[NovaVox] Failed to load subtitle:', err);
     }
-  }
-
-  function loadSubtitleFromText(content, filename) {
-    const ext = filename.split('.').pop()?.toLowerCase() || '';
-    let format = '';
-    if (ext === 'srt') format = 'srt';
-    else if (ext === 'vtt' || ext === 'webvtt') format = 'webvtt';
-    else if (ext === 'ttml' || ext === 'dfxp' || ext === 'xml') format = 'ttml';
-
-    const cues = parseSubtitleText(content, format);
-    if (cues.length === 0) {
-      console.warn('[DualSubs] No cues parsed from file:', filename);
-      return;
-    }
-
-    store = SubtitleStore.create(cues);
-    ensureOverlay();
-    startSync();
-    console.log('[DualSubs] Loaded', cues.length, 'cues from file:', filename);
   }
 
   function parseSubtitleText(text, format) {
@@ -249,7 +227,7 @@
     if (overlayEl && document.contains(overlayEl)) return;
 
     overlayEl = document.createElement('div');
-    overlayEl.id = 'netflix-dual-subs-overlay';
+    overlayEl.id = 'novavox-overlay';
 
     const styles = [
       'left: 0',
@@ -525,7 +503,7 @@
     }
 
     if (bestOffset !== null && Math.abs(bestOffset) > 1) {
-      console.log('[DualSubs] Calibrating offset:',
+      console.log('[NovaVox] Calibrating offset:',
         timeOffset.toFixed(3) + 's ->', bestOffset.toFixed(3) + 's');
       timeOffset = bestOffset;
       consecutiveMisses = 0;
@@ -583,8 +561,8 @@
         chrome.storage.local.set({ availableTracks: [] });
         // Request new tracks after a brief delay for page to load
         setTimeout(() => {
-          window.postMessage({ type: 'netflix_dual_subs_replay' }, '*');
-          window.postMessage({ type: 'dual_subs_media_replay' }, '*');
+          window.postMessage({ type: 'novavox_subs_replay' }, '*');
+          window.postMessage({ type: 'novavox_media_replay' }, '*');
         }, 2000);
       }
     });

@@ -19,11 +19,6 @@
   const hoverToggle = document.getElementById('hover-translate');
   const translateTargetEl = document.getElementById('translate-target');
 
-  const loadFileBtn = document.getElementById('load-file-btn');
-  const subtitleFileInput = document.getElementById('subtitle-file');
-  const fileStatus = document.getElementById('file-status');
-  const fileStatusText = document.getElementById('file-status-text');
-
   const noMediaEl = document.getElementById('no-media');
   const mediaListEl = document.getElementById('media-list');
 
@@ -110,7 +105,7 @@
     }
   }
 
-  function applyDualSubs(enabled) {
+  function applySubtitles(enabled) {
     const lang = enabled ? (selectEl.value || null) : null;
     sendToTab({ type: 'LOAD_SECONDARY', language: lang });
 
@@ -134,7 +129,7 @@
     const enabled = dualSubsToggle.checked;
     chrome.storage.local.set({ dualSubsEnabled: enabled });
     updateControlsState(enabled);
-    applyDualSubs(enabled);
+    applySubtitles(enabled);
   });
 
   selectEl.addEventListener('change', () => {
@@ -168,38 +163,6 @@
     sendToTab({ type: 'SET_TRANSLATE_TARGET', lang: targetLang });
   });
 
-  // ── File import ──
-
-  loadFileBtn.addEventListener('click', () => {
-    subtitleFileInput.click();
-  });
-
-  subtitleFileInput.addEventListener('change', () => {
-    const file = subtitleFileInput.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      sendToTab({
-        type: 'LOAD_SUBTITLE_FILE',
-        content: reader.result,
-        filename: file.name,
-      });
-
-      fileStatusText.textContent = `Loaded: ${file.name}`;
-      fileStatus.classList.remove('hidden');
-      fileStatus.style.cssText = statusBar.style.cssText || '';
-      fileStatus.className = '';
-      fileStatus.style.marginTop = '8px';
-      fileStatus.style.padding = '6px 8px';
-      fileStatus.style.background = '#1a1a1a';
-      fileStatus.style.borderRadius = '4px';
-      fileStatus.style.fontSize = '11px';
-      fileStatus.style.color = '#46d369';
-    };
-    reader.readAsText(file);
-  });
-
   // ── Downloads tab ──
 
   function loadMediaList() {
@@ -225,32 +188,54 @@
 
     noMediaEl.classList.add('hidden');
 
-    // Group media by type
-    const muxed = media.filter((m) => m.type === 'video+audio');
-    const videoOnly = media.filter((m) => m.type === 'video');
-    const audioOnly = media.filter((m) => m.type === 'audio');
+    // Only show muxed (video+audio) — these actually play after download
+    // Skip "video only" streams entirely (useless without ffmpeg merge)
+    const muxed = media
+      .filter((m) => m.type === 'video+audio')
+      .sort((a, b) => (b.height || 0) - (a.height || 0));
 
-    // Sort by quality (resolution or bitrate, descending)
-    const sortByQuality = (a, b) => {
-      const ha = a.height || 0;
-      const hb = b.height || 0;
-      if (ha !== hb) return hb - ha;
-      const sa = a.size || 0;
-      const sb = b.size || 0;
-      return sb - sa;
-    };
+    // For audio, pick the best quality per codec family, label simply
+    const audioAll = media
+      .filter((m) => m.type === 'audio')
+      .sort((a, b) => (b.size || 0) - (a.size || 0));
+    const audioPicks = pickBestAudio(audioAll);
 
-    muxed.sort(sortByQuality);
-    videoOnly.sort(sortByQuality);
-    audioOnly.sort((a, b) => (b.size || 0) - (a.size || 0));
+    // ── Video ──
+    if (muxed.length > 0) {
+      addSection('Video');
+      for (const m of muxed) {
+        const ext = guessExt(m.mimeType);
+        const filename = `${sanitize(title)}_${m.quality}.${ext}`;
+        addMediaItem(
+          m.quality,
+          formatSize(m.size),
+          () => downloadFile(m.url, filename)
+        );
+      }
+    }
 
+    // ── Audio ──
+    if (audioPicks.length > 0) {
+      addSection('Audio');
+      for (const a of audioPicks) {
+        const ext = guessExt(a.mimeType);
+        const filename = `${sanitize(title)}_audio.${ext}`;
+        addMediaItem(
+          a.label,
+          formatSize(a.size),
+          () => downloadFile(a.url, filename)
+        );
+      }
+    }
+
+    // ── Subtitles ──
     if (subTracks.length > 0) {
       addSection('Subtitles');
       for (const track of subTracks) {
         const label = track.displayName || track.language;
-        const detail = track.trackType === 'AUTO' ? 'auto-generated' : 'manual';
-        addMediaItem(label, detail, null, () => {
-          const filename = `${sanitize(title)}_${track.language}.vtt`;
+        const tag = track.trackType === 'AUTO' ? ' (auto)' : '';
+        const filename = `${sanitize(title)}_${track.language}.vtt`;
+        addMediaItem(label + tag, null, () => {
           sendToTab({
             type: 'DOWNLOAD_TRACK',
             language: track.language,
@@ -259,48 +244,41 @@
         });
       }
     }
+  }
 
-    if (muxed.length > 0) {
-      addSection('Video + Audio');
-      for (const m of muxed) {
-        const ext = guessExt(m.mimeType);
-        const filename = `${sanitize(title)}_${m.quality}.${ext}`;
-        addMediaItem(
-          m.quality,
-          formatSize(m.size) + ' ' + shortMime(m.mimeType),
-          m.size,
-          () => downloadFile(m.url, filename)
-        );
+  function pickBestAudio(audioStreams) {
+    if (audioStreams.length === 0) return [];
+
+    // Group by codec family (mp4a vs opus/vorbis)
+    const mp4a = audioStreams.filter((a) => a.mimeType?.includes('mp4a') || a.mimeType?.includes('mp4'));
+    const webm = audioStreams.filter((a) => a.mimeType?.includes('opus') || a.mimeType?.includes('webm') || a.mimeType?.includes('vorbis'));
+
+    const picks = [];
+
+    // Prefer mp4a (wider compatibility), label as "Best" / "Standard"
+    const primary = mp4a.length > 0 ? mp4a : webm;
+    const secondary = mp4a.length > 0 ? webm : [];
+
+    if (primary.length > 0) {
+      picks.push({ ...primary[0], label: primary.length === 1 ? 'Best quality' : 'Best quality' });
+      // Add a smaller option if there's a meaningful size difference
+      if (primary.length > 1) {
+        const smallest = primary[primary.length - 1];
+        const largest = primary[0];
+        if (largest.size && smallest.size && smallest.size < largest.size * 0.6) {
+          picks.push({ ...smallest, label: 'Smaller file' });
+        }
       }
     }
 
-    if (audioOnly.length > 0) {
-      addSection('Audio Only');
-      for (const m of audioOnly) {
-        const ext = guessExt(m.mimeType);
-        const filename = `${sanitize(title)}_${m.quality}.${ext}`;
-        addMediaItem(
-          m.quality,
-          formatSize(m.size) + ' ' + shortMime(m.mimeType),
-          m.size,
-          () => downloadFile(m.url, filename)
-        );
-      }
+    // Add best webm/opus as alternative if mp4a exists too
+    if (secondary.length > 0 && picks.length > 0) {
+      picks.push({ ...secondary[0], label: 'Best quality (webm)' });
+    } else if (secondary.length > 0) {
+      picks.push({ ...secondary[0], label: 'Best quality' });
     }
 
-    if (videoOnly.length > 0) {
-      addSection('Video Only (no audio)');
-      for (const m of videoOnly) {
-        const ext = guessExt(m.mimeType);
-        const filename = `${sanitize(title)}_${m.quality}.${ext}`;
-        addMediaItem(
-          m.quality,
-          formatSize(m.size) + ' ' + shortMime(m.mimeType),
-          m.size,
-          () => downloadFile(m.url, filename)
-        );
-      }
-    }
+    return picks;
   }
 
   function addSection(label) {
@@ -310,7 +288,7 @@
     mediaListEl.appendChild(div);
   }
 
-  function addMediaItem(quality, detail, size, onClick) {
+  function addMediaItem(label, detail, onClick) {
     const item = document.createElement('div');
     item.className = 'media-item';
 
@@ -319,7 +297,7 @@
 
     const q = document.createElement('div');
     q.className = 'media-quality';
-    q.textContent = quality;
+    q.textContent = label;
     info.appendChild(q);
 
     if (detail) {
@@ -371,14 +349,6 @@
     if (mimeType.includes('vorbis')) return 'ogg';
     if (mimeType.includes('audio/')) return 'm4a';
     return 'mp4';
-  }
-
-  function shortMime(mimeType) {
-    if (!mimeType) return '';
-    // "video/mp4; codecs=\"avc1.42001E, mp4a.40.2\"" → "mp4 avc1"
-    const base = mimeType.split(';')[0].split('/')[1] || '';
-    const codec = mimeType.match(/codecs="([^"]+)"/)?.[1]?.split(',')[0]?.trim()?.split('.')[0] || '';
-    return codec ? `${base} ${codec}` : base;
   }
 
   function sanitize(name) {

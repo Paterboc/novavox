@@ -21,7 +21,7 @@
         processYouTubeParse(result);
       }
     } catch (err) {
-      console.error('[DualSubs] JSON.parse intercept error:', err);
+      console.error('[NovaVox] JSON.parse intercept error:', err);
     }
 
     return result;
@@ -66,7 +66,7 @@
         set(val) {
           _ytPR = val;
           try { processYouTubeParse(val); } catch (e) {
-            console.error('[DualSubs] ytInitialPlayerResponse error:', e);
+            console.error('[NovaVox] ytInitialPlayerResponse error:', e);
           }
         },
       });
@@ -86,14 +86,14 @@
 
   window.addEventListener('message', (e) => {
     if (e.source !== window) return;
-    if (e.data?.type === 'netflix_dual_subs_replay' && window.__dualSubsTracks) {
-      window.postMessage({ type: 'netflix_dual_subs', tracks: window.__dualSubsTracks }, '*');
+    if (e.data?.type === 'novavox_subs_replay' && window.__novavoxTracks) {
+      window.postMessage({ type: 'novavox_subs', tracks: window.__novavoxTracks }, '*');
     }
-    if (e.data?.type === 'dual_subs_media_replay' && window.__dualSubsMedia) {
+    if (e.data?.type === 'novavox_media_replay' && window.__novavoxMedia) {
       window.postMessage({
-        type: 'dual_subs_media',
-        media: window.__dualSubsMedia,
-        title: window.__dualSubsTitle || '',
+        type: 'novavox_media',
+        media: window.__novavoxMedia,
+        title: window.__novavoxTitle || '',
       }, '*');
     }
   });
@@ -107,13 +107,13 @@
     findTimedTextTracks(result, 0, allTracks);
 
     if (allTracks.length > 0) {
-      console.log('[DualSubs] Raw timedtexttracks:', allTracks.length, 'tracks found');
+      console.log('[NovaVox] Raw timedtexttracks:', allTracks.length, 'tracks found');
       const payload = allTracks.map(normalizeNetflixTrack).filter(Boolean);
-      console.log('[DualSubs] After normalize:', payload.length, 'usable tracks');
+      console.log('[NovaVox] After normalize:', payload.length, 'usable tracks');
       if (payload.length > 0) {
-        console.log('[DualSubs] Languages:', payload.map(t => t.displayName).join(', '));
-        window.postMessage({ type: 'netflix_dual_subs', tracks: payload }, '*');
-        window.__dualSubsTracks = payload;
+        console.log('[NovaVox] Languages:', payload.map(t => t.displayName).join(', '));
+        window.postMessage({ type: 'novavox_subs', tracks: payload }, '*');
+        window.__novavoxTracks = payload;
       }
     }
   }
@@ -177,7 +177,7 @@
     }
 
     if (urls.length === 0) {
-      console.log('[DualSubs] Track has no URLs:', bcp47, Object.keys(downloadables));
+      console.log('[NovaVox] Track has no URLs:', bcp47, Object.keys(downloadables));
       return null;
     }
 
@@ -198,57 +198,53 @@
   function processYouTubeParse(result) {
     if (!result || typeof result !== 'object') return;
 
+    // Only process objects that look like a real player response
+    // Must have videoDetails or playabilityStatus to be genuine
+    if (!result.videoDetails && !result.playabilityStatus) return;
+
     // Skip ad responses
     if (result.adPlacements || result.playerAds) return;
 
-    // Extract subtitle tracks
-    const captionTracks = findCaptionTracks(result);
+    const title = result.videoDetails?.title || document.title || '';
+
+    // Extract subtitle tracks — use known YouTube path directly
+    const captionTracks =
+      result.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
     if (captionTracks.length > 0) {
       const tracks = captionTracks.map(normalizeYouTubeTrack).filter(Boolean);
       if (tracks.length > 0) {
-        console.log('[DualSubs] YouTube subtitles:', tracks.map(t => t.displayName).join(', '));
-        window.postMessage({ type: 'netflix_dual_subs', tracks }, '*');
-        window.__dualSubsTracks = tracks;
+        console.log('[NovaVox] YouTube subtitles:', tracks.map(t => t.displayName).join(', '));
+        window.postMessage({ type: 'novavox_subs', tracks }, '*');
+        window.__novavoxTracks = tracks;
       }
     }
 
-    // Extract media for downloads
-    const media = extractYouTubeMedia(result);
-    const title = result.videoDetails?.title || document.title || '';
-    if (media.length > 0) {
-      console.log('[DualSubs] YouTube media:', media.length, 'streams detected');
-      window.postMessage({ type: 'dual_subs_media', media, title }, '*');
-      window.__dualSubsMedia = media;
-      window.__dualSubsTitle = title;
-    }
-  }
-
-  function findCaptionTracks(obj, depth) {
-    if (!obj || typeof obj !== 'object' || (depth || 0) > 6) return [];
-    if (obj.captionTracks && Array.isArray(obj.captionTracks)) return obj.captionTracks;
-    if (obj.playerCaptionsTracklistRenderer?.captionTracks) {
-      return obj.playerCaptionsTracklistRenderer.captionTracks;
-    }
-    for (const key of Object.keys(obj)) {
-      if (obj[key] && typeof obj[key] === 'object') {
-        const found = findCaptionTracks(obj[key], (depth || 0) + 1);
-        if (found.length > 0) return found;
+    // Extract media for downloads — use known YouTube path directly
+    const sd = result.streamingData;
+    if (sd) {
+      const media = extractYouTubeMedia(sd);
+      if (media.length > 0) {
+        console.log('[NovaVox] YouTube media:', media.length, 'streams detected');
+        window.postMessage({ type: 'novavox_media', media, title }, '*');
+        window.__novavoxMedia = media;
+        window.__novavoxTitle = title;
       }
     }
-    return [];
   }
 
   function normalizeYouTubeTrack(track) {
-    if (!track.baseUrl) return null;
+    // Validate: must have a URL and a language code
+    if (!track.baseUrl || !track.baseUrl.startsWith('http')) return null;
+    if (!track.languageCode) return null;
+
     const vttUrl =
       track.baseUrl + (track.baseUrl.includes('?') ? '&' : '?') + 'fmt=vtt';
     return {
-      language: track.languageCode || 'unknown',
+      language: track.languageCode,
       displayName:
         track.name?.simpleText ||
         track.name?.runs?.[0]?.text ||
-        track.languageCode ||
-        'Unknown',
+        track.languageCode,
       trackType: track.kind === 'asr' ? 'AUTO' : 'SUBTITLES',
       urls: [{ url: vttUrl, format: 'webvtt' }],
       movieId: null,
@@ -256,19 +252,19 @@
     };
   }
 
-  function extractYouTubeMedia(result) {
+  function extractYouTubeMedia(sd) {
     const media = [];
-    const sd = findStreamingData(result);
-    if (!sd) return media;
 
     // Muxed formats (video + audio together — directly playable)
     for (const f of sd.formats || []) {
-      if (!f.url) continue;
+      if (!isValidFormat(f)) continue;
+      const label = f.qualityLabel || (f.height ? `${f.height}p` : null);
+      if (!label) continue;
       media.push({
         url: f.url,
         type: 'video+audio',
-        mimeType: f.mimeType || 'video/mp4',
-        quality: f.qualityLabel || f.quality || '?',
+        mimeType: f.mimeType,
+        quality: label,
         size: f.contentLength ? parseInt(f.contentLength) : null,
         width: f.width || null,
         height: f.height || null,
@@ -277,16 +273,18 @@
 
     // Adaptive formats (separate streams)
     for (const f of sd.adaptiveFormats || []) {
-      if (!f.url) continue;
-      const mime = f.mimeType || '';
+      if (!isValidFormat(f)) continue;
+      const mime = f.mimeType;
       const isAudio = mime.startsWith('audio/');
+      const label = isAudio
+        ? (f.audioQuality || `${Math.round((f.bitrate || 0) / 1000)}kbps`)
+        : (f.qualityLabel || (f.height ? `${f.height}p` : null));
+      if (!label) continue;
       media.push({
         url: f.url,
         type: isAudio ? 'audio' : 'video',
         mimeType: mime,
-        quality: isAudio
-          ? `${Math.round((f.bitrate || 0) / 1000)}kbps`
-          : f.qualityLabel || `${f.height || '?'}p`,
+        quality: label,
         size: f.contentLength ? parseInt(f.contentLength) : null,
         width: f.width || null,
         height: f.height || null,
@@ -296,15 +294,11 @@
     return media;
   }
 
-  function findStreamingData(obj, depth) {
-    if (!obj || typeof obj !== 'object' || (depth || 0) > 4) return null;
-    if (obj.streamingData) return obj.streamingData;
-    for (const key of Object.keys(obj)) {
-      if (obj[key] && typeof obj[key] === 'object') {
-        const found = findStreamingData(obj[key], (depth || 0) + 1);
-        if (found) return found;
-      }
-    }
-    return null;
+  function isValidFormat(f) {
+    // Must have a real URL and a recognized mime type
+    if (!f.url || !f.url.startsWith('http')) return false;
+    if (!f.mimeType) return false;
+    if (!f.mimeType.startsWith('video/') && !f.mimeType.startsWith('audio/')) return false;
+    return true;
   }
 })();

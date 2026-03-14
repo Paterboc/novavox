@@ -1,122 +1,109 @@
-# StreamGrab Translate
+# NovaVox
 
-Dual subtitles, video/audio downloads, and instant translate for Netflix & YouTube — all from one Chrome extension with zero setup.
+Watch in any language. Dual subtitles, media downloads, and instant translate for Netflix, YouTube, and any website — zero setup, runs entirely in your browser.
 
-## Features
+## What It Does
 
-### Dual Subtitles
-- Overlay a secondary subtitle language below the native subtitles on **Netflix** and **YouTube**
-- Auto-sync and calibration — timing adjusts automatically on seek, skip, and playback resume
-- Load external subtitle files (.srt, .vtt, .ttml) as the secondary track
-- Adjustable font size (S / M / L)
-
-### Media Downloads
-- Detect available video and audio streams on YouTube
-- Download **video + audio** (muxed), **audio only**, or **video only** streams
-- Download subtitle tracks as .vtt files
-- All detection happens in-browser — no external tools or APIs required
-
-### Right-Click Translate
-- Select text on any webpage, right-click, and translate instantly
-- Auto-detects source language
-- 32 target languages supported
-- Works on native subtitles and the dual subtitle overlay
+- **Dual Subtitles** — display two subtitle languages at once on Netflix and YouTube
+- **Download Media** — save video, audio, and subtitle files from YouTube
+- **Instant Translate** — right-click any text on any website to translate it instantly
 
 ## Installation
 
 1. Clone or download this repository
    ```
-   git clone https://github.com/Paterboc/streamgrab-translate.git
+   git clone https://github.com/Paterboc/novavox.git
    ```
 2. Open Chrome and go to `chrome://extensions`
-3. Enable **Developer mode** (toggle in the top-right corner)
-4. Click **Load unpacked**
-5. Select the cloned folder
-6. The StreamGrab Translate icon will appear in your Chrome toolbar
+3. Enable **Developer mode** (top-right toggle)
+4. Click **Load unpacked** and select the `novavox` folder
+5. The NovaVox icon appears in your toolbar
 
-No additional software, API keys, or configuration required.
+No API keys, no accounts, no external software.
 
-## Usage
+## Features
 
 ### Dual Subtitles
 
-1. Go to any Netflix or YouTube video
-2. Click the StreamGrab Translate icon in the toolbar
-3. Open the **Subtitles** tab
-4. Toggle **Dual subtitles** on
-5. Select a **Secondary language** from the detected tracks
-6. Adjust **Font size** if needed
+Display a secondary subtitle language below the native subtitles while watching Netflix or YouTube.
 
-The secondary subtitles appear below the native ones. On Netflix they're positioned at the bottom of the viewport; on YouTube they're anchored inside the video player so they scale with fullscreen.
+- Automatic subtitle detection — NovaVox reads every subtitle language the platform offers
+- Pick a language from the dropdown and it appears instantly
+- Auto-sync with calibration — timing adjusts on seek, skip, and resume
+- Three font sizes (S / M / L)
+- Works in fullscreen
 
-#### Loading External Subtitle Files
+**How to use:**
+1. Play a video on Netflix or YouTube
+2. Click the NovaVox icon → **Subtitles** tab
+3. Toggle **Dual subtitles** on
+4. Pick your secondary language from the dropdown
 
-1. Click **Browse** in the Subtitles tab
-2. Select a `.srt`, `.vtt`, or `.ttml` file from your computer
-3. The file is parsed and overlaid on the current video
+### Media Downloads
 
-This is useful for adding subtitles in languages not offered by the platform, or for using subtitle files downloaded from other sources.
+Save video, audio, and subtitles from YouTube directly to your computer.
 
-### Downloading Media
+- **Video** — ready-to-play files with audio included (up to 720p)
+- **Audio** — extract just the audio track (music, podcasts, lectures)
+- **Subtitles** — download any available subtitle track as a .vtt file
 
-1. Navigate to a YouTube video
-2. Click the StreamGrab Translate icon
-3. Open the **Downloads** tab
-4. Available streams are listed by category:
-   - **Subtitles** — download any detected subtitle track
-   - **Video + Audio** — muxed streams (directly playable after download)
-   - **Audio Only** — just the audio track
-   - **Video Only** — just the video (no audio)
-5. Click **Download** on any item
+All media is detected from the page itself — nothing is proxied, re-encoded, or sent to external servers.
 
-Stream detection happens automatically when the page loads. Media URLs are extracted directly from the page — nothing is proxied or re-encoded.
+**How to use:**
+1. Open a YouTube video
+2. Click the NovaVox icon → **Downloads** tab
+3. Pick a quality and click **Download**
 
-### Right-Click Translate
+> Netflix video streams are DRM-encrypted and cannot be downloaded. Netflix subtitles (plain text) can be downloaded.
 
-1. Select text on any webpage
-2. Right-click and choose **Translate "[selected text]"**
-3. A tooltip shows the translation and detected source language
+### Instant Translate
 
-Change the target language in the StreamGrab Translate popup under **Translate to**. The translate feature works independently on any website.
+Translate selected text on any website with a right-click. Works everywhere — not just streaming sites.
+
+- Select text on Reddit, Wikipedia, Twitter/X, news articles, blogs, Amazon, forums — literally any webpage
+- Right-click → **Translate** — a tooltip shows the translation and detected source language
+- Auto-detects the source language
+- 32 target languages
+- Works on Netflix/YouTube subtitles and the dual subtitle overlay too
+
+**How to use:**
+1. Select text on any page
+2. Right-click → **Translate "[text]"**
+3. Change target language anytime in the NovaVox popup
 
 ## Supported Sites
 
-| Site | Dual Subs | Downloads | Translate |
-|------|-----------|-----------|-----------|
-| Netflix | Yes | Subtitles | Yes |
-| YouTube | Yes | Video, Audio, Subtitles | Yes |
-| Any website | — | — | Yes |
+| | Dual Subs | Video Download | Audio Download | Subtitle Download | Translate |
+|---|---|---|---|---|---|
+| **Netflix** | Yes | No (DRM) | No (DRM) | Yes | Yes |
+| **YouTube** | Yes | Yes | Yes | Yes | Yes |
+| **Any website** | — | — | — | — | Yes |
+
+The translate feature works on every website: social media, news, forums, e-commerce, documentation — anything with selectable text.
 
 ## Supported Subtitle Formats
 
-- **TTML / DFXP** (Netflix default)
-- **WebVTT** (YouTube default)
-- **SRT** (common download format)
-
-## Requirements
-
-- Google Chrome or any Chromium-based browser (Edge, Brave, Arc, etc.)
-- A Netflix subscription (for Netflix features)
+| Format | Used By |
+|--------|---------|
+| TTML / DFXP | Netflix |
+| WebVTT | YouTube |
+| SRT | Internal parser (used for compatibility) |
 
 ## Permissions
 
-| Permission | Purpose |
-|------------|---------|
-| storage | Saves language preferences and settings |
-| activeTab | Accesses the current tab for subtitle overlay |
-| contextMenus | Adds "Translate" to the right-click menu |
-| scripting | Injects the translation script on demand |
-| downloads | Triggers video/audio/subtitle file downloads |
-| Host permissions | Netflix and YouTube domains for subtitle and media access; Google Translate API for translations |
+| Permission | Why |
+|---|---|
+| `storage` | Saves your language and font preferences |
+| `activeTab` | Reads the current tab to overlay subtitles |
+| `contextMenus` | Adds "Translate" to right-click menu |
+| `scripting` | Injects the translate tooltip on demand |
+| `downloads` | Saves video/audio/subtitle files to your computer |
+| Host access | Netflix + YouTube domains for subtitle and media data; Google Translate API |
 
-## How It Works
+## Requirements
 
-StreamGrab Translate uses two content script "worlds" per supported site:
-
-- **MAIN world** — intercepts the page's own data (Netflix manifest responses, YouTube player config) to extract subtitle track metadata and streaming URLs. No network requests are made; the extension reads what the site already loads.
-- **ISOLATED world** — fetches the selected secondary subtitle file, parses it, and renders a synced overlay on the video element. Also relays detected media URLs to the service worker for the Downloads tab.
-
-Subtitle timing is synced via `requestAnimationFrame` at ~4 Hz with `timeupdate` events as the primary driver. An auto-calibration system detects large desyncs (>1s sustained over 60s) and applies a one-time offset correction.
+- Google Chrome, Edge, Brave, Arc, or any Chromium-based browser
+- Netflix subscription (for Netflix features)
 
 ## License
 

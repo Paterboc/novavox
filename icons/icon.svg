@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7c5cbf"/>
+      <stop offset="100%" stop-color="#4a2d8a"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect x="4" y="4" width="120" height="120" rx="26" ry="26" fill="url(#bg)"/>
+
+  <!-- Download arrow (left side) -->
+  <g fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="44" y1="24" x2="44" y2="56"/>
+    <polyline points="30,46 44,60 58,46"/>
+    <path d="M24,60 L24,72 Q24,78 30,78 L58,78 Q64,78 64,72 L64,60"/>
+  </g>
+
+  <!-- Japanese character "字" (meaning "character/text") -->
+  <text x="94" y="62" font-family="Helvetica, Arial, sans-serif" font-size="42" font-weight="700"
+        fill="#e8b4ff" text-anchor="middle" opacity="0.95">字</text>
+
+  <!-- Dual subtitle lines -->
+  <g fill="none" stroke-linecap="round">
+    <line x1="24" y1="96" x2="68" y2="96" stroke="#fff" stroke-width="4" opacity="0.9"/>
+    <line x1="36" y1="106" x2="100" y2="106" stroke="#e8b4ff" stroke-width="3.5" opacity="0.7"/>
+  </g>
+</svg>

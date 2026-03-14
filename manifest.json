@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "StreamGrab Translate",
+  "name": "NovaVox",
   "version": "2.0.0",
-  "description": "Dual subtitles, video/audio downloads, and instant translate for Netflix & YouTube.",
+  "description": "Watch in any language. Dual subtitles, media downloads, and instant translate for Netflix and YouTube.",
   "permissions": ["storage", "activeTab", "contextMenus", "scripting", "downloads"],
   "host_permissions": [
     "https://*.netflix.com/*",
